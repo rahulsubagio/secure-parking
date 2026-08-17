@@ -109,7 +109,14 @@ class GateInApp:
 
         log.info("[INIT] Connecting to MQTT broker...")
         self.mqtt.connect()
-        log.info("[INIT] MQTT connected OK")
+        if self.mqtt.connected_event.is_set():
+            log.info("[INIT] MQTT connected OK")
+        else:
+            log.warning(
+                "[INIT] MQTT tidak tersedia — "
+                "sistem berjalan dalam mode OFFLINE. "
+                "Auto-reconnect aktif."
+            )
 
         log.info("[INIT] Connecting to PLC (Modbus RTU)...")
         if not self.plc.connect():

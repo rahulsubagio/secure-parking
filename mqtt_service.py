@@ -60,17 +60,60 @@ class MQTTService:
         self._retry_thread = None
 
     def connect(self):
-        self.client.connect(
-            config.MQTT_HOST,
-            config.MQTT_PORT,
-            config.MQTT_KEEPALIVE,
+        """
+        Attempt to connect to the MQTT broker.
+
+        If the broker is unreachable, the application continues in
+        **offline mode**.  The background retry worker will
+        periodically attempt to reconnect.  Once the broker becomes
+        available, the connection is established automatically and
+        any queued messages are delivered.
+        """
+        # Configure paho auto-reconnect for *post-disconnect* scenarios
+        # (exponential back-off from 1s to 30s).
+        self.client.reconnect_delay_set(
+            min_delay=1,
+            max_delay=30,
         )
-        self.client.loop_start()
 
-        if not self.connected_event.wait(5):
-            raise TimeoutError("MQTT connection timeout")
+        try:
+            self.client.connect(
+                config.MQTT_HOST,
+                config.MQTT_PORT,
+                config.MQTT_KEEPALIVE,
+            )
+            self.client.loop_start()
 
-        # Start the background retry worker.
+            if self.connected_event.wait(5):
+                log.info(
+                    "MQTT connected to %s:%s",
+                    config.MQTT_HOST,
+                    config.MQTT_PORT,
+                )
+            else:
+                log.warning(
+                    "MQTT connection to %s:%s timed out — "
+                    "starting in OFFLINE mode",
+                    config.MQTT_HOST,
+                    config.MQTT_PORT,
+                )
+
+        except Exception as exc:
+            log.warning(
+                "MQTT broker unreachable (%s:%s): %s — "
+                "starting in OFFLINE mode",
+                config.MQTT_HOST,
+                config.MQTT_PORT,
+                exc,
+            )
+            # Start the network loop anyway — it will be idle until we
+            # successfully call reconnect() from the retry worker.
+            try:
+                self.client.loop_start()
+            except Exception:
+                pass
+
+        # Always start the retry worker, regardless of connection status.
         self._start_retry_worker()
 
     def disconnect(self):
@@ -253,7 +296,7 @@ class MQTTService:
             return False
 
     # ------------------------------------------------------------------ #
-    #  Background retry worker                                             #
+    #  Background retry worker + auto-reconnect                            #
     # ------------------------------------------------------------------ #
 
     def _start_retry_worker(self):
@@ -266,11 +309,36 @@ class MQTTService:
             daemon=True,
         )
         self._retry_thread.start()
-        log.info("MQTT retry worker started")
+        log.info("MQTT retry/reconnect worker started")
+
+    def _try_reconnect(self):
+        """
+        Attempt to (re)connect to the MQTT broker.
+
+        Called by the retry worker when the connection is down.
+        Returns ``True`` if the connection was established.
+        """
+        try:
+            self.client.reconnect()
+            # Give paho a moment to complete the handshake.
+            if self.connected_event.wait(5):
+                log.info(
+                    "MQTT reconnected to %s:%s",
+                    config.MQTT_HOST,
+                    config.MQTT_PORT,
+                )
+                return True
+            log.debug("MQTT reconnect handshake timed out")
+            return False
+        except Exception as exc:
+            log.debug("MQTT reconnect failed: %s", exc)
+            return False
 
     def _retry_loop(self):
         """
-        Periodically check for pending messages and re-publish them.
+        Periodically:
+        1. If disconnected — attempt to reconnect.
+        2. If connected — re-publish any pending messages.
         """
         while not self._retry_stop.is_set():
             self._retry_stop.wait(config.MESSAGE_RETRY_INTERVAL)
@@ -278,9 +346,19 @@ class MQTTService:
             if self._retry_stop.is_set():
                 break
 
+            # --- Auto-reconnect ---
             if not self.connected_event.is_set():
+                pending = self.store.pending_count()
+                log.info(
+                    "MQTT offline — attempting reconnect... "
+                    "(%d pending message(s) queued)",
+                    pending,
+                )
+                self._try_reconnect()
+                # Whether reconnect succeeded or not, wait for next cycle.
                 continue
 
+            # --- Retry pending messages ---
             pending = self.store.get_pending()
             if not pending:
                 continue
@@ -291,6 +369,10 @@ class MQTTService:
                 if self._retry_stop.is_set():
                     break
                 if not self.connected_event.is_set():
+                    log.warning(
+                        "Connection lost during retry — "
+                        "will resume next cycle"
+                    )
                     break
 
                 try:
@@ -324,7 +406,7 @@ class MQTTService:
                         exc,
                     )
 
-        log.info("MQTT retry worker stopped")
+        log.info("MQTT retry/reconnect worker stopped")
 
     # ------------------------------------------------------------------ #
     #  Public API                                                          #

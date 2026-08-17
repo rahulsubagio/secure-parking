@@ -133,7 +133,8 @@ class MQTTService:
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             log.info(
-                "MQTT connected to %s:%s",
+                "[MQTT] === KONEKSI MQTT BERHASIL === "
+                "Terhubung ke %s:%s",
                 config.MQTT_HOST,
                 config.MQTT_PORT,
             )
@@ -323,7 +324,8 @@ class MQTTService:
             # Give paho a moment to complete the handshake.
             if self.connected_event.wait(5):
                 log.info(
-                    "MQTT reconnected to %s:%s",
+                    "[MQTT] === KONEKSI MQTT BERHASIL DIPULIHKAN === "
+                    "Terhubung kembali ke %s:%s",
                     config.MQTT_HOST,
                     config.MQTT_PORT,
                 )
@@ -363,7 +365,11 @@ class MQTTService:
             if not pending:
                 continue
 
-            log.info("Retry worker: %d pending message(s)", len(pending))
+            log.info(
+                "[MQTT-SYNC] Memulai sinkronisasi %d transaksi offline "
+                "yang tertunda...",
+                len(pending),
+            )
 
             for msg in pending:
                 if self._retry_stop.is_set():
@@ -391,10 +397,11 @@ class MQTTService:
 
                     self.store.mark_sent_and_delete(msg["id"])
                     log.info(
-                        "Retry OK: id=%d session=%s topic=%s",
-                        msg["id"],
+                        "[MQTT-SYNC] TRANSAKSI OFFLINE TERKIRIM: "
+                        "session=%s | topic=%s | id=%d",
                         msg["session_number"],
                         msg["topic"],
+                        msg["id"],
                     )
 
                 except Exception as exc:

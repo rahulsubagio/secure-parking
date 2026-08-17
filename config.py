@@ -81,3 +81,8 @@ USER_ACTION_TIMEOUT = float(os.getenv("USER_ACTION_TIMEOUT", "30"))
 # ---------------- HELP ----------------
 HELP_REASON_BUTTON = os.getenv("HELP_REASON_BUTTON", "tombol bantuan ditekan!")
 HELP_REASON_PRINTER = os.getenv("HELP_REASON_PRINTER", "kertas habis, segera isi ulang!")
+
+# ---------------- MESSAGE STORE ----------------
+MESSAGE_STORE_DB = os.getenv("MESSAGE_STORE_DB", "./message_store.db")
+MESSAGE_RETRY_INTERVAL = float(os.getenv("MESSAGE_RETRY_INTERVAL", "5"))
+MESSAGE_MAX_RETRIES = int(os.getenv("MESSAGE_MAX_RETRIES", "100"))

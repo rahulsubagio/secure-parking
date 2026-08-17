@@ -1,10 +1,12 @@
 import json
 import logging
 import threading
+import time
 
 import paho.mqtt.client as mqtt
 
 import config
+from message_store import MessageStore
 
 log = logging.getLogger(__name__)
 
@@ -12,6 +14,15 @@ log = logging.getLogger(__name__)
 class MQTTService:
     """
     MQTT service for Gate IN.
+
+    Publishing strategy:
+    - **Transactional** topics (general, member/request) use QoS 2
+      (exactly-once) and are persisted in a local SQLite store before
+      being published.  A background retry worker re-publishes any
+      messages that failed due to connectivity issues.
+    - **Realtime** topics (help) use QoS 1 and are NOT stored locally.
+      If the publish fails, a warning is logged but the message is not
+      retried — help events must be delivered immediately or not at all.
 
     Member verification intentionally does NOT generate a separate UUID.
     The session number is the transaction/request identifier and is used
@@ -22,6 +33,7 @@ class MQTTService:
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=config.MQTT_CLIENT_ID,
+            clean_session=False,
         )
 
         if config.MQTT_USERNAME:
@@ -40,6 +52,13 @@ class MQTTService:
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
 
+        # Local message store for transactional topics.
+        self.store = MessageStore()
+
+        # Retry worker control.
+        self._retry_stop = threading.Event()
+        self._retry_thread = None
+
     def connect(self):
         self.client.connect(
             config.MQTT_HOST,
@@ -51,12 +70,22 @@ class MQTTService:
         if not self.connected_event.wait(5):
             raise TimeoutError("MQTT connection timeout")
 
+        # Start the background retry worker.
+        self._start_retry_worker()
+
     def disconnect(self):
+        self._retry_stop.set()
         try:
             self.client.loop_stop()
             self.client.disconnect()
         except Exception:
             pass
+        if self._retry_thread and self._retry_thread.is_alive():
+            self._retry_thread.join(timeout=3)
+
+    # ------------------------------------------------------------------ #
+    #  Callbacks                                                           #
+    # ------------------------------------------------------------------ #
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
@@ -67,6 +96,15 @@ class MQTTService:
             )
             self.connected_event.set()
             client.subscribe(config.MQTT_MEMBER_RESPONSE_TOPIC, qos=1)
+
+            # Trigger immediate retry of any queued messages.
+            pending = self.store.pending_count()
+            if pending > 0:
+                log.info(
+                    "MQTT reconnected — %d pending message(s) queued "
+                    "for retry",
+                    pending,
+                )
         else:
             log.error("MQTT connection rejected: %s", reason_code)
 
@@ -110,35 +148,219 @@ class MQTTService:
                     session_number,
                 )
 
-    def _publish(self, topic, payload):
+    # ------------------------------------------------------------------ #
+    #  Publish: persistent (QoS 2 + SQLite)                                #
+    # ------------------------------------------------------------------ #
+
+    def _publish_persistent(self, topic, payload, session_number):
+        """
+        Store the message locally, then attempt to publish with QoS 2.
+
+        If the publish succeeds the row is deleted from the store.
+        If it fails (disconnected, timeout, etc.) the message remains
+        in SQLite and will be retried by the background worker.
+
+        Returns ``True`` if the message was published immediately,
+        ``False`` if it was queued for later delivery.
+        """
+        row_id = self.store.enqueue(topic, payload, session_number, qos=2)
+
+        if row_id is None:
+            # Deduplication: message was already sent.
+            log.info(
+                "Message already sent — skipping: session=%s topic=%s",
+                session_number,
+                topic,
+            )
+            return True
+
         if not self.connected_event.is_set():
-            raise RuntimeError("MQTT is not connected")
+            log.warning(
+                "MQTT offline — message queued locally: session=%s topic=%s",
+                session_number,
+                topic,
+            )
+            return False
 
-        info = self.client.publish(
-            topic,
-            json.dumps(payload, separators=(",", ":")),
-            qos=1,
+        try:
+            info = self.client.publish(
+                topic,
+                json.dumps(payload, separators=(",", ":")),
+                qos=2,
+            )
+            info.wait_for_publish(timeout=10)
+
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(f"MQTT publish failed: rc={info.rc}")
+
+            # Publish succeeded — remove from local store.
+            self.store.mark_sent_and_delete(row_id)
+            log.info(
+                "Published (QoS 2) and cleared from store: "
+                "session=%s topic=%s",
+                session_number,
+                topic,
+            )
+            return True
+
+        except Exception as exc:
+            log.warning(
+                "Publish failed (will retry): session=%s topic=%s — %s",
+                session_number,
+                topic,
+                exc,
+            )
+            self.store.increment_retry(row_id)
+            return False
+
+    # ------------------------------------------------------------------ #
+    #  Publish: realtime (QoS 1, no store)                                 #
+    # ------------------------------------------------------------------ #
+
+    def _publish_realtime(self, topic, payload):
+        """
+        Fire-and-forget publish at QoS 1.
+
+        Used for the ``help`` topic which must be delivered in real-time.
+        Messages are NOT stored in the local queue and are NOT retried.
+        """
+        if not self.connected_event.is_set():
+            log.warning(
+                "MQTT offline — realtime message dropped: topic=%s",
+                topic,
+            )
+            return False
+
+        try:
+            info = self.client.publish(
+                topic,
+                json.dumps(payload, separators=(",", ":")),
+                qos=1,
+            )
+            info.wait_for_publish(timeout=5)
+
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(f"MQTT publish failed: rc={info.rc}")
+
+            return True
+
+        except Exception as exc:
+            log.warning(
+                "Realtime publish failed (not retried): topic=%s — %s",
+                topic,
+                exc,
+            )
+            return False
+
+    # ------------------------------------------------------------------ #
+    #  Background retry worker                                             #
+    # ------------------------------------------------------------------ #
+
+    def _start_retry_worker(self):
+        if self._retry_thread and self._retry_thread.is_alive():
+            return
+        self._retry_stop.clear()
+        self._retry_thread = threading.Thread(
+            target=self._retry_loop,
+            name="mqtt-retry-worker",
+            daemon=True,
         )
-        info.wait_for_publish()
+        self._retry_thread.start()
+        log.info("MQTT retry worker started")
 
-        if info.rc != mqtt.MQTT_ERR_SUCCESS:
-            raise RuntimeError(f"MQTT publish failed: rc={info.rc}")
+    def _retry_loop(self):
+        """
+        Periodically check for pending messages and re-publish them.
+        """
+        while not self._retry_stop.is_set():
+            self._retry_stop.wait(config.MESSAGE_RETRY_INTERVAL)
+
+            if self._retry_stop.is_set():
+                break
+
+            if not self.connected_event.is_set():
+                continue
+
+            pending = self.store.get_pending()
+            if not pending:
+                continue
+
+            log.info("Retry worker: %d pending message(s)", len(pending))
+
+            for msg in pending:
+                if self._retry_stop.is_set():
+                    break
+                if not self.connected_event.is_set():
+                    break
+
+                try:
+                    payload_json = msg["payload"]
+                    info = self.client.publish(
+                        msg["topic"],
+                        payload_json,
+                        qos=msg["qos"],
+                    )
+                    info.wait_for_publish(timeout=10)
+
+                    if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                        raise RuntimeError(
+                            f"MQTT publish failed: rc={info.rc}"
+                        )
+
+                    self.store.mark_sent_and_delete(msg["id"])
+                    log.info(
+                        "Retry OK: id=%d session=%s topic=%s",
+                        msg["id"],
+                        msg["session_number"],
+                        msg["topic"],
+                    )
+
+                except Exception as exc:
+                    self.store.increment_retry(msg["id"])
+                    log.warning(
+                        "Retry FAILED: id=%d session=%s — %s",
+                        msg["id"],
+                        msg["session_number"],
+                        exc,
+                    )
+
+        log.info("MQTT retry worker stopped")
+
+    # ------------------------------------------------------------------ #
+    #  Public API                                                          #
+    # ------------------------------------------------------------------ #
 
     def publish_general(self, session_number, vehicle_type, entry_time):
+        """
+        Publish general visitor entry.  QoS 2 + local store.
+
+        Returns ``True`` if published immediately, ``False`` if queued.
+        """
         payload = {
             "sessionNumber": session_number,
             "vehicleType": vehicle_type,
             "entryTime": entry_time,
         }
-        self._publish(config.MQTT_GENERAL_TOPIC, payload)
-        log.info("General visitor published: %s", payload)
+        sent = self._publish_persistent(
+            config.MQTT_GENERAL_TOPIC, payload, session_number
+        )
+        log.info(
+            "General visitor %s: %s",
+            "published" if sent else "queued",
+            payload,
+        )
+        return sent
 
     def verify_member(self, session_number, member_code, entry_time):
         """
-        Publish member verification request.
+        Publish member verification request.  QoS 2 + local store.
 
         There is NO separately generated requestId.
         sessionNumber itself is the unique request/transaction identifier.
+
+        The request is always stored locally.  However, the *response*
+        must arrive in real-time for the gate to open; if the broker is
+        unreachable the verification will time out regardless.
         """
         payload = {
             "sessionNumber": session_number,
@@ -154,7 +376,15 @@ class MQTTService:
             }
 
         try:
-            self._publish(config.MQTT_MEMBER_REQUEST_TOPIC, payload)
+            sent = self._publish_persistent(
+                config.MQTT_MEMBER_REQUEST_TOPIC, payload, session_number
+            )
+
+            if not sent:
+                raise RuntimeError(
+                    "MQTT offline — member verification request queued "
+                    "but cannot wait for response"
+                )
 
             if not event.wait(config.MEMBER_VERIFY_TIMEOUT):
                 raise TimeoutError(
@@ -187,9 +417,17 @@ class MQTTService:
                 self.member_results.pop(session_number, None)
 
     def publish_help(self, timestamp, reason):
+        """
+        Publish a help request.  QoS 1, realtime, NO local store.
+
+        If MQTT is offline, the message is dropped with a warning.
+        """
         payload = {
             "time": timestamp,
             "reason": reason,
         }
-        self._publish(config.MQTT_HELP_TOPIC, payload)
-        log.info("Help request published: %s", payload)
+        sent = self._publish_realtime(config.MQTT_HELP_TOPIC, payload)
+        if sent:
+            log.info("Help request published: %s", payload)
+        else:
+            log.warning("Help request NOT sent (MQTT offline): %s", payload)

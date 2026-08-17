@@ -25,6 +25,24 @@ def iso_now():
 
 
 class GateInApp:
+
+    # Friendly labels for log output.
+    _INPUT_LABELS = {
+        "S1": "Tombol Hijau",
+        "S2": "Tombol Kuning",
+        "S3": "Tombol Merah",
+        "S4": "VLD Dispenser",
+        "S5": "VLD Barrier",
+        "S6": "Photocell",
+    }
+    _OUTPUT_LABELS = {
+        "R1": "Barrier OPEN",
+        "R2": "Barrier CLOSE",
+        "B1": "State Proses",
+        "B21": "BBB Open Req",
+        "B37": "Mirror B1",
+    }
+
     def __init__(self):
         self.stop_event = threading.Event()
 
@@ -55,18 +73,54 @@ class GateInApp:
             "S4": 0.0,
         }
 
+    # ---------------- logging helpers ----------------
+
+    @staticmethod
+    def _on_off(val):
+        return "ON" if val else "OFF"
+
+    def _format_inputs(self, inputs):
+        """Format input states as a single-line summary."""
+        parts = []
+        for key in ("S1", "S2", "S3", "S4", "S5", "S6"):
+            label = self._INPUT_LABELS.get(key, key)
+            parts.append(f"{key}({label})={self._on_off(inputs[key])}")
+        return " | ".join(parts)
+
+    def _format_outputs(self, outputs):
+        """Format output states as a single-line summary."""
+        parts = []
+        for key in ("R1", "R2", "B1", "B21", "B37"):
+            label = self._OUTPUT_LABELS.get(key, key)
+            parts.append(f"{key}({label})={self._on_off(outputs[key])}")
+        return " | ".join(parts)
+
+    @staticmethod
+    def _log_step(step_num, total, description):
+        """Log a numbered transaction step."""
+        log.info(">>> STEP [%d/%d] %s", step_num, total, description)
+
     # ---------------- lifecycle ----------------
 
     def start(self):
-        log.info("Starting Gate IN BBB application")
+        log.info("========================================")
+        log.info("  Starting Gate IN BBB application")
+        log.info("========================================")
 
+        log.info("[INIT] Connecting to MQTT broker...")
         self.mqtt.connect()
+        log.info("[INIT] MQTT connected OK")
 
+        log.info("[INIT] Connecting to PLC (Modbus RTU)...")
         if not self.plc.connect():
             raise RuntimeError("PLC Modbus connection failed")
+        log.info("[INIT] PLC connected OK")
 
+        log.info("[INIT] Starting QR scanner...")
         self.scanner.start()
+        log.info("[INIT] QR scanner started OK")
 
+        log.info("[INIT] All subsystems ready — entering PLC poll loop")
         # Main PLC polling loop.
         self.run()
 
@@ -90,6 +144,44 @@ class GateInApp:
                 continue
 
             outputs = self.plc.read_outputs_and_bits()
+
+            # --- Log input state changes ---
+            if self.last_inputs is not None and inputs != self.last_inputs:
+                changed = [
+                    k for k in inputs
+                    if inputs[k] != self.last_inputs.get(k)
+                ]
+                for k in changed:
+                    label = self._INPUT_LABELS.get(k, k)
+                    log.info(
+                        "[INPUT]  %s (%s): %s -> %s",
+                        k, label,
+                        self._on_off(self.last_inputs.get(k)),
+                        self._on_off(inputs[k]),
+                    )
+                log.info("[INPUT]  State: %s", self._format_inputs(inputs))
+
+            # --- Log output state changes ---
+            if (
+                outputs is not None
+                and self.last_outputs is not None
+                and outputs != self.last_outputs
+            ):
+                changed = [
+                    k for k in outputs
+                    if outputs[k] != self.last_outputs.get(k)
+                ]
+                for k in changed:
+                    label = self._OUTPUT_LABELS.get(k, k)
+                    log.info(
+                        "[OUTPUT] %s (%s): %s -> %s",
+                        k, label,
+                        self._on_off(self.last_outputs.get(k)),
+                        self._on_off(outputs[k]),
+                    )
+                log.info(
+                    "[OUTPUT] State: %s", self._format_outputs(outputs)
+                )
 
             self.last_inputs = inputs
             self.last_outputs = outputs
@@ -115,20 +207,24 @@ class GateInApp:
 
         # S4 rising edge = vehicle detected at dispenser.
         if s4 and not self.last_s4:
+            log.info("[EDGE]   S4 (VLD Dispenser) RISING — kendaraan terdeteksi")
             self.on_vehicle_detected()
 
         # S1 rising edge = motorcycle.
         if s1 and not self.last_s1:
+            log.info("[EDGE]   S1 (Tombol Hijau) RISING — pilihan: MOTOR")
             self.on_vehicle_choice("motorcycle")
 
         # S2 rising edge = car.
         if s2 and not self.last_s2:
+            log.info("[EDGE]   S2 (Tombol Kuning) RISING — pilihan: MOBIL")
             self.on_vehicle_choice("car")
 
         # S3 is physically NC in your project.
         # The logical value must be verified in Outseal Online Monitor.
         # Here we treat a logical rising edge as "help event".
         if s3 and not self.last_s3:
+            log.info("[EDGE]   S3 (Tombol Merah) RISING — BANTUAN diminta")
             self.on_help_request()
 
         self.last_s1 = s1
@@ -141,21 +237,26 @@ class GateInApp:
     def on_vehicle_detected(self):
         with self.state_lock:
             if self.session_active:
-                log.warning("S4 detected while previous session is active")
+                log.warning(
+                    "[SESSION] S4 detected while previous session active "
+                    "— IGNORED"
+                )
                 return
 
             self.vehicle_present = True
             self.session_active = True
             self.session_started_at = time.monotonic()
 
-        log.info("Vehicle detected at dispenser (S4)")
+        log.info(
+            "[SESSION] === SESI BARU === Kendaraan terdeteksi di dispenser"
+        )
 
     def on_vehicle_choice(self, vehicle_type):
         with self.state_lock:
             if not self.session_active:
                 log.warning(
-                    "Vehicle choice %s ignored: no active S4 session",
-                    vehicle_type,
+                    "[SESSION] Pilihan %s DIABAIKAN — tidak ada sesi aktif",
+                    vehicle_type.upper(),
                 )
                 return
 
@@ -163,6 +264,10 @@ class GateInApp:
         if not self.debounced(vehicle_type):
             return
 
+        log.info(
+            "[SESSION] Pilihan kendaraan diterima: %s",
+            vehicle_type.upper(),
+        )
         threading.Thread(
             target=self.handle_general_visitor,
             args=(vehicle_type,),
@@ -173,9 +278,12 @@ class GateInApp:
     def on_qr(self, member_code):
         with self.state_lock:
             if not self.session_active:
-                log.warning("QR ignored: no active vehicle session")
+                log.warning(
+                    "[QR] Scan QR DIABAIKAN — tidak ada sesi aktif"
+                )
                 return
 
+        log.info("[QR] QR code diterima: %s", member_code.strip())
         threading.Thread(
             target=self.handle_member,
             args=(member_code.strip(),),
@@ -186,47 +294,80 @@ class GateInApp:
     def handle_general_visitor(self, vehicle_type):
         session_number = self.sessions.next_session()
         entry_time = iso_now()
+        vehicle_label = "MOTOR" if vehicle_type == "motorcycle" else "MOBIL"
 
-        log.info(
-            "General visitor: session=%s vehicle=%s entry=%s",
-            session_number,
-            vehicle_type,
-            entry_time,
-        )
+        log.info("")
+        log.info("============================================")
+        log.info("  TRANSAKSI PENGUNJUNG UMUM (%s)", vehicle_label)
+        log.info("  Session : %s", session_number)
+        log.info("  Waktu   : %s", entry_time)
+        log.info("============================================")
 
         try:
-            # Server must receive the data before opening the gate.
-            self.mqtt.publish_general(
+            # Step 1: Simpan & publish ke MQTT
+            self._log_step(1, 4, "Menyimpan data ke SQLite & publish MQTT...")
+            sent = self.mqtt.publish_general(
                 session_number,
                 vehicle_type,
                 entry_time,
             )
 
-            # Print before opening the gate. Any printer exception is treated
-            # as a help condition; the gate is NOT opened.
+            if sent:
+                log.info(
+                    ">>> STEP [1/4] BERHASIL — data terkirim ke server (QoS 2)"
+                )
+            else:
+                log.warning(
+                    ">>> STEP [1/4] MQTT OFFLINE — data disimpan lokal, "
+                    "akan dikirim ulang otomatis. Gate tetap buka."
+                )
+
+            # Step 2: Cetak tiket
+            self._log_step(2, 4, "Mencetak tiket...")
             try:
                 self.printer.print_ticket(
                     session_number,
                     vehicle_type,
                     entry_time,
                 )
+                log.info(">>> STEP [2/4] BERHASIL — tiket tercetak")
             except Exception as exc:
-                log.exception("Printer error / possible paper-out: %s", exc)
+                log.error(
+                    ">>> STEP [2/4] GAGAL — printer error: %s", exc
+                )
+                log.info(
+                    ">>> Mengirim permintaan bantuan (printer error)..."
+                )
                 self.publish_help(config.HELP_REASON_PRINTER)
+                log.warning(
+                    ">>> TRANSAKSI DIBATALKAN — gate TIDAK dibuka "
+                    "(printer error)"
+                )
                 return
 
-            # BBB writes only B21. PLC decides whether R1 can actually turn ON.
+            # Step 3: Kirim B21 ke PLC
+            self._log_step(3, 4, "Mengirim OPEN_REQUEST (B21) ke PLC...")
             if not self.plc.open_request():
+                log.error(">>> STEP [3/4] GAGAL — tidak bisa menulis B21")
                 raise RuntimeError("Could not send B21 OPEN_REQUEST")
+            log.info(">>> STEP [3/4] BERHASIL — B21 = ON dikirim ke PLC")
 
+            # Step 4: Tunggu R1 dari PLC
+            self._log_step(4, 4, "Menunggu barrier terbuka (R1)...")
             if self.plc.wait_gate_open(timeout=5):
-                log.info("Barrier OPEN command detected (R1)")
+                log.info(">>> STEP [4/4] BERHASIL — R1 ON, barrier TERBUKA")
+                log.info("============================================")
+                log.info("  TRANSAKSI SELESAI — SUKSES")
+                log.info("============================================")
             else:
-                log.warning("B21 sent but R1 was not observed within 5s")
+                log.warning(
+                    ">>> STEP [4/4] TIMEOUT — B21 terkirim tapi R1 "
+                    "tidak terdeteksi dalam 5 detik"
+                )
 
         except Exception:
             log.exception(
-                "General visitor transaction failed; gate will NOT be opened"
+                ">>> TRANSAKSI GAGAL — gate TIDAK dibuka"
             )
 
         finally:
@@ -234,20 +375,23 @@ class GateInApp:
 
     def handle_member(self, member_code):
         if not member_code:
-            log.warning("Empty member code")
+            log.warning("[MEMBER] Kode member kosong — diabaikan")
             return
 
         session_number = self.sessions.next_session()
         entry_time = iso_now()
 
-        log.info(
-            "Member scan: session=%s member=%s entry=%s",
-            session_number,
-            member_code,
-            entry_time,
-        )
+        log.info("")
+        log.info("============================================")
+        log.info("  TRANSAKSI MEMBER")
+        log.info("  Session : %s", session_number)
+        log.info("  Member  : %s", member_code)
+        log.info("  Waktu   : %s", entry_time)
+        log.info("============================================")
 
         try:
+            # Step 1: Kirim verifikasi ke server
+            self._log_step(1, 3, "Mengirim verifikasi member ke server...")
             verified, response = self.mqtt.verify_member(
                 session_number,
                 member_code,
@@ -256,27 +400,49 @@ class GateInApp:
 
             if not verified:
                 log.warning(
-                    "Member NOT VERIFIED: %s. Barrier remains closed.",
+                    ">>> STEP [1/3] DITOLAK — member '%s' TIDAK TERVERIFIKASI",
                     member_code,
+                )
+                log.warning(
+                    ">>> TRANSAKSI DIBATALKAN — gate TIDAK dibuka "
+                    "(member ditolak)"
                 )
                 return
 
-            # Verified member: open gate through PLC handshake.
-            if not self.plc.open_request():
-                raise RuntimeError("Could not send B21 OPEN_REQUEST")
+            log.info(
+                ">>> STEP [1/3] BERHASIL — member '%s' TERVERIFIKASI",
+                member_code,
+            )
 
+            # Step 2: Kirim B21 ke PLC
+            self._log_step(2, 3, "Mengirim OPEN_REQUEST (B21) ke PLC...")
+            if not self.plc.open_request():
+                log.error(">>> STEP [2/3] GAGAL — tidak bisa menulis B21")
+                raise RuntimeError("Could not send B21 OPEN_REQUEST")
+            log.info(">>> STEP [2/3] BERHASIL — B21 = ON dikirim ke PLC")
+
+            # Step 3: Tunggu R1 dari PLC
+            self._log_step(3, 3, "Menunggu barrier terbuka (R1)...")
             if self.plc.wait_gate_open(timeout=5):
-                log.info("Verified member barrier OPEN (R1)")
+                log.info(">>> STEP [3/3] BERHASIL — R1 ON, barrier TERBUKA")
+                log.info("============================================")
+                log.info("  TRANSAKSI MEMBER SELESAI — SUKSES")
+                log.info("============================================")
             else:
-                log.warning("B21 sent but R1 was not observed within 5s")
+                log.warning(
+                    ">>> STEP [3/3] TIMEOUT — B21 terkirim tapi R1 "
+                    "tidak terdeteksi dalam 5 detik"
+                )
 
         except TimeoutError:
             log.error(
-                "Member verification timeout. Barrier remains closed."
+                ">>> STEP [1/3] TIMEOUT — server tidak merespons dalam "
+                "%ds. Gate TIDAK dibuka.",
+                config.MEMBER_VERIFY_TIMEOUT,
             )
         except Exception:
             log.exception(
-                "Member transaction failed; gate will NOT be opened"
+                ">>> TRANSAKSI MEMBER GAGAL — gate TIDAK dibuka"
             )
         finally:
             self.finish_transaction_state()
@@ -285,14 +451,16 @@ class GateInApp:
         if not self.debounced("S3"):
             return
 
+        log.info("[HELP] Permintaan bantuan diterima (tombol S3)")
         self.publish_help(config.HELP_REASON_BUTTON)
 
     def publish_help(self, reason):
         timestamp = iso_now()
+        log.info("[HELP] Mengirim help request: %s", reason)
         try:
             self.mqtt.publish_help(timestamp, reason)
         except Exception:
-            log.exception("Failed publishing help request: %s", reason)
+            log.exception("[HELP] GAGAL mengirim help request: %s", reason)
 
 
     def finish_transaction_state(self):
@@ -300,6 +468,7 @@ class GateInApp:
             self.session_active = False
             self.vehicle_present = False
             self.session_started_at = 0.0
+        log.info("[SESSION] Sesi direset — siap menerima kendaraan baru")
 
     def check_session_timeout(self):
         with self.state_lock:
@@ -307,9 +476,12 @@ class GateInApp:
             started = self.session_started_at
 
         if active and started:
-            if time.monotonic() - started > config.USER_ACTION_TIMEOUT:
+            elapsed = time.monotonic() - started
+            if elapsed > config.USER_ACTION_TIMEOUT:
                 log.warning(
-                    "Vehicle interaction timeout. Resetting BBB session state."
+                    "[SESSION] TIMEOUT — kendaraan tidak memilih dalam "
+                    "%.0f detik. Sesi direset.",
+                    elapsed,
                 )
                 self.finish_transaction_state()
 

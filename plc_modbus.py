@@ -152,12 +152,27 @@ class PLCModbus:
 
     def wait_gate_open(self, timeout=5.0):
         """Wait until R.1 is observed ON."""
+        log.debug(
+            "Waiting for R1 (barrier open), timeout=%.1fs", timeout
+        )
         deadline = time.monotonic() + timeout
+        poll_count = 0
         while time.monotonic() < deadline:
             state = self.read_outputs_and_bits()
+            poll_count += 1
             if state and state["R1"]:
+                log.info(
+                    "R1 = ON detected after %d poll(s) (%.2fs)",
+                    poll_count,
+                    timeout - (deadline - time.monotonic()),
+                )
                 return True
             time.sleep(0.05)
+        log.warning(
+            "R1 not detected after %d poll(s) (%.1fs timeout)",
+            poll_count,
+            timeout,
+        )
         return False
 
     def snapshot(self):

@@ -59,7 +59,7 @@ class MQTTService:
             pass
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
-        if int(reason_code) == 0:
+        if reason_code == 0:
             log.info(
                 "MQTT connected to %s:%s",
                 config.MQTT_HOST,

@@ -38,6 +38,7 @@ class GateInApp:
     _OUTPUT_LABELS = {
         "R1": "Barrier OPEN",
         "R2": "Barrier CLOSE",
+        "R3": "Barrier STOP",
         "B1": "State Proses",
         "B21": "BBB Open Req",
         "B37": "Mirror B1",
@@ -90,7 +91,7 @@ class GateInApp:
     def _format_outputs(self, outputs):
         """Format output states as a single-line summary."""
         parts = []
-        for key in ("R1", "R2", "B1", "B21", "B37"):
+        for key in ("R1", "R2", "R3", "B1", "B21", "B37"):
             label = self._OUTPUT_LABELS.get(key, key)
             parts.append(f"{key}({label})={self._on_off(outputs[key])}")
         return " | ".join(parts)

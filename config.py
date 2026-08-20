@@ -18,6 +18,7 @@ PLC_POLL_INTERVAL = float(os.getenv("PLC_POLL_INTERVAL", "0.10"))
 PLC = {
     "R1": 0,
     "R2": 1,
+    "R3": 2,
     "B1": 128,
     "B21": 148,       # BBB_OPEN_REQUEST
     "B37": 164,       # mirrors B1 in your Rung 36

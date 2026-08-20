@@ -99,7 +99,7 @@ class PLCModbus:
 
     def read_outputs_and_bits(self):
         """
-        Read R.1, R.2 and selected B bits.
+        Read R.1, R.2, R.3 and selected B bits.
         Outseal maps R.1..R.128 to coil addresses 0..127,
         and B.1..B.128 to 128..255.
         """
@@ -118,6 +118,7 @@ class PLCModbus:
                 return {
                     "R1": bool(rr.bits[config.PLC["R1"]]),
                     "R2": bool(rr.bits[config.PLC["R2"]]),
+                    "R3": bool(rr.bits[config.PLC["R3"]]),
                     "B1": bool(rr.bits[config.PLC["B1"]]),
                     "B21": bool(rr.bits[config.PLC["B21"]]),
                     "B37": bool(rr.bits[config.PLC["B37"]]),

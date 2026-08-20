@@ -2,6 +2,7 @@ import json
 import logging
 import threading
 import time
+import ssl
 
 import paho.mqtt.client as mqtt
 
@@ -35,6 +36,8 @@ class MQTTService:
             client_id=config.MQTT_CLIENT_ID,
             clean_session=False,
         )
+
+        self.client.tls_set(ca_certs=None, cert_reqs=ssl.CERT_REQUIRED)
 
         if config.MQTT_USERNAME:
             self.client.username_pw_set(

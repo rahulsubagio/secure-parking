@@ -42,6 +42,7 @@ PRINTER_IN_EP = int(os.getenv("PRINTER_IN_EP", "0x81"), 16)
 PRINTER_OUT_EP = int(os.getenv("PRINTER_OUT_EP", "0x03"), 16)
 PRINTER_INTERFACE = int(os.getenv("PRINTER_INTERFACE", "0"))
 PRINTER_LOGO = os.getenv("PRINTER_LOGO", "./logo.png")
+PRINTER_LOGO_WIDTH = int(os.getenv("PRINTER_LOGO_WIDTH", "380"))
 
 HOSPITAL_NAME = os.getenv("HOSPITAL_NAME", "RUMAH SAKIT RAJAWALI CITRA")
 HOSPITAL_ADDRESS = os.getenv("HOSPITAL_ADDRESS", "Jl. Pleret No.KM 2.5")

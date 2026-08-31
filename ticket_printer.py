@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime
+from PIL import Image
 
 from escpos.printer import Usb
 
@@ -73,7 +74,21 @@ class TicketPrinter:
         if os.path.exists(config.PRINTER_LOGO):
             try:
                 p.set(align="center")
-                p.image(config.PRINTER_LOGO, impl="bitImageRaster")
+                img = Image.open(config.PRINTER_LOGO)
+                
+                # Resize gambar secara proporsional agar tidak kebesaran di kertas thermal
+                max_width = getattr(config, "PRINTER_LOGO_WIDTH", 250)
+                if img.width > max_width:
+                    ratio = max_width / float(img.width)
+                    new_height = int(float(img.height) * float(ratio))
+                    
+                    # Pillow compatibility fallback (mengakomodasi versi lama/baru Pillow)
+                    resample_filter = getattr(Image, "Resampling", Image)
+                    filter_mode = getattr(resample_filter, "LANCZOS", getattr(Image, "ANTIALIAS", 1))
+                    
+                    img = img.resize((max_width, new_height), filter_mode)
+                
+                p.image(img, impl="bitImageRaster")
             except Exception:
                 log.exception("Failed printing logo; continuing without logo.")
 

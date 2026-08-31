@@ -119,9 +119,11 @@ class PLCModbus:
                     "R1": bool(rr.bits[config.PLC["R1"]]),
                     "R2": bool(rr.bits[config.PLC["R2"]]),
                     "R3": bool(rr.bits[config.PLC["R3"]]),
-                    "B1": bool(rr.bits[config.PLC["B1"]]),
+                    "B11": bool(rr.bits[config.PLC["B11"]]),
+                    "B12": bool(rr.bits[config.PLC["B12"]]),
+                    "B13": bool(rr.bits[config.PLC["B13"]]),
                     "B21": bool(rr.bits[config.PLC["B21"]]),
-                    "B37": bool(rr.bits[config.PLC["B37"]]),
+                    "B31": bool(rr.bits[config.PLC["B31"]]),
                 }
             except Exception:
                 self.connected = False
@@ -149,6 +151,26 @@ class PLCModbus:
             except Exception:
                 self.connected = False
                 log.exception("Failed to send OPEN_REQUEST")
+                return False
+
+    def reset_session_latches(self):
+        """
+        Force unlatch B.11, B.12, B.13. 
+        Useful if a transaction is cancelled (e.g. timeout or error)
+        so that the system does not remember a stale button press.
+        """
+        with self.lock:
+            if not self._ensure():
+                return False
+            try:
+                self._call(self.client.write_coil, address=config.PLC["B11"], value=False)
+                self._call(self.client.write_coil, address=config.PLC["B12"], value=False)
+                self._call(self.client.write_coil, address=config.PLC["B13"], value=False)
+                log.info("Reset session latches: B11, B12, B13 = OFF")
+                return True
+            except Exception:
+                self.connected = False
+                log.exception("Failed to reset session latches")
                 return False
 
     def wait_gate_open(self, timeout=5.0):

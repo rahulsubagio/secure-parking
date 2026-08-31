@@ -84,7 +84,10 @@ class TicketPrinter:
         p.text(config.HOSPITAL_ADDRESS + "\n")
         p.text("--------------------------------\n")
 
-        p.text(f"Waktu Masuk: {entry_time}\n")
+        # Format waktu untuk tiket (hilangkan huruf 'T' dan milidetik)
+        display_time = entry_time.replace("T", " ").split(".")[0]
+        
+        p.text(f"Waktu Masuk: {display_time}\n")
         p.text(f"Tipe Kendaraan: {vehicle_label}\n")
 
         p.set(bold=True)

@@ -19,9 +19,11 @@ PLC = {
     "R1": 0,
     "R2": 1,
     "R3": 2,
-    "B1": 128,
+    "B11": 138,       # Latch Tombol Hijau (Motor)
+    "B12": 139,       # Latch Tombol Kuning (Mobil)
+    "B13": 140,       # Latch Tombol Merah (Bantuan)
     "B21": 148,       # BBB_OPEN_REQUEST
-    "B37": 164,       # mirrors B1 in your Rung 36
+    "B31": 158,       # Status S.4 VLD Dispenser
     "S1": 0,
     "S2": 1,
     "S3": 2,

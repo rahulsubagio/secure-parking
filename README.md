@@ -13,21 +13,19 @@ Pymodbus memakai alamat zero-based.
 |---|---|---:|---|
 | R.1 | Coil | 0 | Barrier OPEN command/status |
 | R.2 | Coil | 1 | Barrier CLOSE command/status |
-| B.1 | Coil | 128 | State proses |
-| B.21 | Coil | 148 | BBB_OPEN_REQUEST |
-| B.37 | Coil | 164 | Mirror B.1 pada Rung 36 |
-| S.1 | Discrete Input | 0 | tombol hijau |
-| S.2 | Discrete Input | 1 | tombol kuning |
-| S.3 | Discrete Input | 2 | tombol merah |
-| S.4 | Discrete Input | 3 | VLD dispenser |
-| S.5 | Discrete Input | 4 | VLD barrier |
+| R.3 | Coil | 2 | Barrier STOP command/status |
+| S.1 | Discrete Input | 0 | tombol hijau (motor) |
+| S.2 | Discrete Input | 1 | tombol kuning (mobil) |
+| S.3 | Discrete Input | 2 | tombol merah (bantuan) |
+| S.4 | Discrete Input | 3 | VLD dispenser (luar) |
+| S.5 | Discrete Input | 4 | VLD barrier (dalam) |
 | S.6 | Discrete Input | 5 | photocell |
 
 ## Alur
 
 ### Pengunjung umum
 
-S4 -> BBB membuat sesi -> S1/S2 -> publish MQTT -> print tiket -> write B21 -> PLC membuka R1.
+S4 -> BBB membuat sesi -> S1/S2 -> publish MQTT -> print tiket -> PLC membuka R1.
 
 Payload:
 {
@@ -38,7 +36,7 @@ Payload:
 
 ### Member
 
-S4 -> scan QR -> MQTT member request -> server mengembalikan success -> jika true write B21.
+S4 -> scan QR -> MQTT member request -> server mengembalikan success -> jika true PLC membuka R1.
 
 Payload request:
 {
@@ -53,8 +51,6 @@ Response minimal:
   "requestId": "...",
   "success": true
 }
-
-Jika false/timeout, B21 tidak ditulis.
 
 ### Bantuan
 
@@ -112,8 +108,8 @@ BBB menggunakan USB-RS485 ke pin A-S/B-S Outseal.
 
 The BBB connects to the MQTT broker using:
 
-- Host: `secure-parking.seigan.id`
-- Port: `1883`
+- Host: `ip address server`
+- Port: `port mqtt`
 - Username: configured in `.env`
 - Protocol: MQTT over TCP on port 1883 (no `https://` prefix)
 

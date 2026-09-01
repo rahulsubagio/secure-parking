@@ -7,9 +7,9 @@ import config
 
 class SessionStore:
     """
-    Persistent daily sequence:
-    session number = YYYYMMDD + 4-digit sequence.
-    Example: 202608170001
+    Pembuatan nomor urut harian:
+    Nomor sesi = YYYYMMDD + 4 digit urutan.
+    Contoh: 202608170001
     """
 
     def __init__(self, path=None):
@@ -39,8 +39,8 @@ class SessionStore:
             today = datetime.now().strftime("%Y%m%d")
             seq = self._read()
 
-            # Sequence file stores the sequence used today.
-            # Reset at the beginning of a new day.
+            # File menyimpan nomor urut yang digunakan hari ini.
+            # Akan di-reset pada awal hari yang baru.
             marker_path = self.path + ".date"
             try:
                 with open(marker_path, "r", encoding="utf-8") as f:

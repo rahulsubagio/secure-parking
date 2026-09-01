@@ -13,9 +13,6 @@ class PLCModbus:
     """
     BBB = Modbus RTU master
     Outseal Mega V3 = Modbus RTU slave, ID 1.
-
-    Important:
-    pymodbus addresses are zero-based.
     """
 
     def __init__(self):
@@ -32,7 +29,7 @@ class PLCModbus:
 
     def _call(self, method, **kwargs):
         """
-        Supports pymodbus releases that use either 'device_id' or 'slave'.
+        pymodbus parameter 'device_id' atau 'slave'.
         """
         try:
             return method(**kwargs, device_id=config.PLC_SLAVE_ID)
@@ -72,7 +69,7 @@ class PLCModbus:
         return True
 
     def read_inputs(self):
-        """Read S.1 ... S.6 as discrete inputs."""
+        """Membaca S.1 ... S.6 sebagai input diskrit."""
         with self.lock:
             if not self._ensure():
                 return None
@@ -99,9 +96,7 @@ class PLCModbus:
 
     def read_outputs_and_bits(self):
         """
-        Read R.1, R.2, R.3 and selected B bits.
-        Outseal maps R.1..R.128 to coil addresses 0..127,
-        and B.1..B.128 to 128..255.
+        Membaca R.1, R.2, R.3 dan bit B yang dipilih.
         """
         with self.lock:
             if not self._ensure():
@@ -132,8 +127,7 @@ class PLCModbus:
 
     def open_request(self):
         """
-        Pulse B.21. Rung 9 latches B.3 when B.21 is ON.
-        Rung 33 in the uploaded ladder then unlatches B.21.
+        Mengirim pulse ke B.21.
         """
         with self.lock:
             if not self._ensure():
@@ -155,9 +149,8 @@ class PLCModbus:
 
     def reset_session_latches(self):
         """
-        Force unlatch B.11, B.12, B.13. 
-        Useful if a transaction is cancelled (e.g. timeout or error)
-        so that the system does not remember a stale button press.
+        Memaksa reset/unlatch B.11, B.12, B.13. 
+        Berguna jika transaksi dibatalkan.
         """
         with self.lock:
             if not self._ensure():
@@ -174,7 +167,7 @@ class PLCModbus:
                 return False
 
     def wait_gate_open(self, timeout=5.0, retry_request=False):
-        """Wait until R.1 is observed ON."""
+        """Menunggu hingga R.1 terdeteksi ON."""
         log.debug(
             "Waiting for R1 (barrier open), timeout=%.1fs", timeout
         )

@@ -12,19 +12,14 @@ log = logging.getLogger(__name__)
 
 class MessageStore:
     """
-    SQLite-backed persistent message queue with audit trail.
+    Antrean pesan SQLite persisten dengan jejak audit (audit trail).
 
-    Transactional MQTT messages (general visitor, member request) are
-    stored here *before* being published.  If the publish succeeds the
-    row is moved to ``message_history`` for audit trail; if it fails
-    the row remains in ``pending_messages`` and a background retry
-    worker picks it up later.
+    Pesan MQTT transaksional (pengunjung umum, request member) 
+    disimpan lokal sebelum dikirim. Jika berhasil dikirim, baris
+    dipindahkan ke ``message_history``. Jika gagal, baris tetap di 
+    ``pending_messages`` agar dicoba lagi oleh worker background.
 
-    The ``help`` topic is intentionally excluded — it is real-time and
-    must not be queued.
-
-    Thread safety is provided through a reentrant lock that serialises
-    all database access.
+    Topik ``help`` (bantuan) dikecualikan
     """
 
     _SCHEMA = """
@@ -100,9 +95,8 @@ class MessageStore:
 
     def enqueue(self, topic, payload, session_number, qos=2):
         """
-        Persist a message.  Returns the row ``id`` on success or
-        ``None`` if a row with the same ``session_number`` + ``topic``
-        already exists and has already been sent (deduplication guard).
+        Menyimpan pesan. Mengembalikan ``id`` baris jika berhasil, atau 
+        ``None`` jika pesan duplikat sudah pernah dikirim (mencegah duplikasi).
         """
         payload_json = json.dumps(payload, separators=(",", ":"))
         created_at = datetime.now().isoformat(timespec="milliseconds")
@@ -110,7 +104,7 @@ class MessageStore:
         with self.lock:
             conn = self._connect()
             try:
-                # Check history first — if already sent, suppress duplicate.
+                # Cek history dulu — jika sudah terkirim, abaikan duplikat.
                 hist = conn.execute(
                     "SELECT id FROM message_history "
                     "WHERE session_number = ? AND topic = ?",
@@ -126,7 +120,7 @@ class MessageStore:
                     )
                     return None
 
-                # Check for an existing pending row with the same key.
+                # Cek baris pending dengan key yang sama.
                 row = conn.execute(
                     "SELECT id, status FROM pending_messages "
                     "WHERE session_number = ? AND topic = ?",
@@ -143,8 +137,7 @@ class MessageStore:
                         )
                         return None
 
-                    # Row exists but is still pending — update payload
-                    # in case it changed (unlikely but safe).
+                    # Baris masih berstatus pending — perbarui payload 
                     conn.execute(
                         "UPDATE pending_messages SET payload = ? "
                         "WHERE id = ?",
@@ -175,7 +168,7 @@ class MessageStore:
                 conn.close()
 
     def mark_sent(self, row_id):
-        """Mark a message as successfully published."""
+        """Tandai pesan sukses terkirim."""
         with self.lock:
             conn = self._connect()
             try:
@@ -189,7 +182,7 @@ class MessageStore:
                 conn.close()
 
     def delete(self, row_id):
-        """Remove a message from the store."""
+        """Hapus pesan dari database."""
         with self.lock:
             conn = self._connect()
             try:
@@ -203,15 +196,14 @@ class MessageStore:
 
     def mark_sent_and_delete(self, row_id):
         """
-        Move a pending message to ``message_history`` for audit trail,
-        then delete it from ``pending_messages``.
+        Memindahkan pesan pending ke ``message_history`` untuk jejak audit,
+        lalu menghapusnya dari ``pending_messages``.
         """
         sent_at = datetime.now().isoformat(timespec="milliseconds")
 
         with self.lock:
             conn = self._connect()
             try:
-                # Fetch the row before moving.
                 row = conn.execute(
                     "SELECT topic, payload, qos, session_number, "
                     "       created_at, retry_count "
@@ -253,10 +245,10 @@ class MessageStore:
 
     def get_pending(self, max_retries=None):
         """
-        Return all rows with ``status = 'pending'``.
+        Mengembalikan semua baris dengan status ``'pending'``.
 
-        If *max_retries* is given, rows whose ``retry_count`` exceeds
-        it are skipped (and marked ``failed``).
+        Jika *max_retries* diberikan, baris yang melampaui batas
+        percobaan akan dilewati (dan ditandai ``'failed'``).
         """
         if max_retries is None:
             max_retries = config.MESSAGE_MAX_RETRIES
@@ -264,7 +256,6 @@ class MessageStore:
         with self.lock:
             conn = self._connect()
             try:
-                # Mark over-retried rows as failed first.
                 conn.execute(
                     "UPDATE pending_messages SET status = 'failed' "
                     "WHERE status = 'pending' AND retry_count >= ?",
@@ -285,7 +276,7 @@ class MessageStore:
                 conn.close()
 
     def increment_retry(self, row_id):
-        """Bump the retry counter for a pending message."""
+        """Menambah jumlah percobaan (retry) untuk pesan pending."""
         with self.lock:
             conn = self._connect()
             try:
@@ -300,7 +291,7 @@ class MessageStore:
                 conn.close()
 
     def pending_count(self):
-        """Return the number of pending messages."""
+        """Mengembalikan jumlah pesan yang masih pending."""
         with self.lock:
             conn = self._connect()
             try:
@@ -313,7 +304,7 @@ class MessageStore:
                 conn.close()
 
     def cleanup_sent(self):
-        """Delete all rows that are already marked 'sent'."""
+        """Menghapus semua baris yang sudah berstatus 'sent'."""
         with self.lock:
             conn = self._connect()
             try:
@@ -330,10 +321,10 @@ class MessageStore:
 
     def get_history(self, limit=100, session_number=None):
         """
-        Query the audit trail.
+        Mencari riwayat (audit trail).
 
-        Returns up to *limit* most recent history rows, optionally
-        filtered by *session_number*.
+        Mengembalikan data sebanyak *limit* baris terbaru, bisa 
+        difilter berdasarkan *session_number*.
         """
         with self.lock:
             conn = self._connect()
@@ -365,7 +356,7 @@ class MessageStore:
                 conn.close()
 
     def history_count(self):
-        """Return the total number of history rows."""
+        """Mengembalikan total jumlah baris riwayat (history)."""
         with self.lock:
             conn = self._connect()
             try:

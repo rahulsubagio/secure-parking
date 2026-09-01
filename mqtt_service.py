@@ -14,20 +14,12 @@ log = logging.getLogger(__name__)
 
 class MQTTService:
     """
-    MQTT service for Gate IN.
-
-    Publishing strategy:
-    - **Transactional** topics (general, member/request) use QoS 2
-      (exactly-once) and are persisted in a local SQLite store before
-      being published.  A background retry worker re-publishes any
-      messages that failed due to connectivity issues.
-    - **Realtime** topics (help) use QoS 1 and are NOT stored locally.
-      If the publish fails, a warning is logged but the message is not
-      retried — help events must be delivered immediately or not at all.
-
-    Member verification intentionally does NOT generate a separate UUID.
-    The session number is the transaction/request identifier and is used
-    to correlate the verification response.
+    - Topik transaksional (general, member/request) menggunakan QoS 2
+      dan disimpan di SQLite lokal sebelum dikirim.
+      Worker background akan mencoba mengirim ulang jika gagal. 
+    - Topik realtime (help) menggunakan QoS 1 dan TIDAK disimpan lokal.
+      Jika gagal, hanya dicatat di log tanpa dikirim ulang
+      harus dikirim saat itu juga atau tidak sama sekali.
     """
 
     def __init__(self):
@@ -55,25 +47,24 @@ class MQTTService:
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
 
-        # Local message store for transactional topics.
+        # Database lokal untuk menyimpan pesan.
         self.store = MessageStore()
 
-        # Retry worker control.
+        # Kontrol untuk worker pengirim ulang (retry worker).
         self._retry_stop = threading.Event()
         self._retry_thread = None
 
     def connect(self):
         """
-        Attempt to connect to the MQTT broker.
+        Mencoba terhubung ke broker MQTT.
 
-        If the broker is unreachable, the application continues in
-        **offline mode**.  The background retry worker will
-        periodically attempt to reconnect.  Once the broker becomes
-        available, the connection is established automatically and
-        any queued messages are delivered.
+        Jika broker tidak dapat dijangkau, BBB tetap berjalan dalam
+        **mode OFFLINE**. Worker background akan mencoba menyambung ulang
+        secara berkala. Saat broker kembali tersedia, koneksi akan 
+        tersambung otomatis dan semua pesan yang mengantre akan dikirim.
         """
-        # Configure paho auto-reconnect for *post-disconnect* scenarios
-        # (exponential back-off from 1s to 30s).
+        # Konfigurasi auto-reconnect 
+        # (exponential back-off 1s hingga 30s).
         self.client.reconnect_delay_set(
             min_delay=1,
             max_delay=30,
@@ -109,14 +100,13 @@ class MQTTService:
                 config.MQTT_PORT,
                 exc,
             )
-            # Start the network loop anyway — it will be idle until we
-            # successfully call reconnect() from the retry worker.
+            
             try:
                 self.client.loop_start()
             except Exception:
                 pass
 
-        # Always start the retry worker, regardless of connection status.
+        # Selalu jalankan retry worker.
         self._start_retry_worker()
 
     def disconnect(self):
@@ -144,7 +134,7 @@ class MQTTService:
             self.connected_event.set()
             client.subscribe(config.MQTT_MEMBER_RESPONSE_TOPIC, qos=1)
 
-            # Trigger immediate retry of any queued messages.
+            # Langsung picu pengiriman ulang pesan yang mengantre.
             pending = self.store.pending_count()
             if pending > 0:
                 log.info(
@@ -168,9 +158,6 @@ class MQTTService:
             log.warning("Invalid JSON on %s", msg.topic)
             return
 
-        # Primary correlation key: sessionNumber.
-        # For compatibility, requestId is accepted only if a server sends
-        # it back, but BBB does not generate or publish a separate requestId.
         session_number = str(payload.get("sessionNumber", "")).strip()
 
         if not session_number:
@@ -201,19 +188,17 @@ class MQTTService:
 
     def _publish_persistent(self, topic, payload, session_number):
         """
-        Store the message locally, then attempt to publish with QoS 2.
+        Menyimpan pesan di lokal, lalu mencoba mempublikasikan dengan QoS 2.
 
-        If the publish succeeds the row is deleted from the store.
-        If it fails (disconnected, timeout, etc.) the message remains
-        in SQLite and will be retried by the background worker.
+        Jika sukses, baris akan dihapus dari database lokal.
+        Jika gagal, pesan tetap ada di SQLite dan akan dikirim ulang oleh worker background.
 
-        Returns ``True`` if the message was published immediately,
-        ``False`` if it was queued for later delivery.
+        Mengembalikan True jika pesan langsung terkirim, False jika masuk antrean.
         """
         row_id = self.store.enqueue(topic, payload, session_number, qos=2)
 
         if row_id is None:
-            # Deduplication: message was already sent.
+            # Deduplikasi: pesan ini sudah pernah terkirim.
             log.info(
                 "Message already sent — skipping: session=%s topic=%s",
                 session_number,
@@ -240,7 +225,7 @@ class MQTTService:
             if info.rc != mqtt.MQTT_ERR_SUCCESS:
                 raise RuntimeError(f"MQTT publish failed: rc={info.rc}")
 
-            # Publish succeeded — remove from local store.
+            # Publish berhasil — hapus dari database lokal.
             self.store.mark_sent_and_delete(row_id)
             log.info(
                 "Published (QoS 2) and cleared from store: "
@@ -266,10 +251,10 @@ class MQTTService:
 
     def _publish_realtime(self, topic, payload):
         """
-        Fire-and-forget publish at QoS 1.
+        Pengiriman lepas (fire-and-forget) dengan QoS 1.
 
-        Used for the ``help`` topic which must be delivered in real-time.
-        Messages are NOT stored in the local queue and are NOT retried.
+        Digunakan untuk topik 'help' yang harus terkirim secara real-time.
+        Pesan TIDAK disimpan dalam antrean lokal dan TIDAK dikirim ulang jika gagal.
         """
         if not self.connected_event.is_set():
             log.warning(
@@ -317,14 +302,11 @@ class MQTTService:
 
     def _try_reconnect(self):
         """
-        Attempt to (re)connect to the MQTT broker.
-
-        Called by the retry worker when the connection is down.
-        Returns ``True`` if the connection was established.
+        Mencoba terhubung ulang ke broker MQTT.
         """
         try:
             self.client.reconnect()
-            # Give paho a moment to complete the handshake.
+            # Beri jeda sejenak agar paho menyelesaikan handshake.
             if self.connected_event.wait(5):
                 log.info(
                     "[MQTT] === KONEKSI MQTT BERHASIL DIPULIHKAN === "
@@ -341,9 +323,9 @@ class MQTTService:
 
     def _retry_loop(self):
         """
-        Periodically:
-        1. If disconnected — attempt to reconnect.
-        2. If connected — re-publish any pending messages.
+        Secara berkala melakukan:
+        1. Jika terputus — mencoba menyambung ulang.
+        2. Jika tersambung — mengirim ulang pesan yang masih mengantre (pending).
         """
         while not self._retry_stop.is_set():
             self._retry_stop.wait(config.MESSAGE_RETRY_INTERVAL)
@@ -360,10 +342,9 @@ class MQTTService:
                     pending,
                 )
                 self._try_reconnect()
-                # Whether reconnect succeeded or not, wait for next cycle.
                 continue
 
-            # --- Retry pending messages ---
+            # --- Mengirim ulang pesan tertunda ---
             pending = self.store.get_pending()
             if not pending:
                 continue
@@ -424,9 +405,9 @@ class MQTTService:
 
     def publish_general(self, session_number, vehicle_type, entry_time):
         """
-        Publish general visitor entry.  QoS 2 + local store.
+        Mempublikasikan tiket pengunjung umum. Menggunakan QoS 2 + penyimpanan lokal.
 
-        Returns ``True`` if published immediately, ``False`` if queued.
+        Mengembalikan True jika langsung terkirim, False jika masuk antrean.
         """
         payload = {
             "sessionNumber": session_number,
@@ -445,14 +426,11 @@ class MQTTService:
 
     def verify_member(self, session_number, member_code, entry_time):
         """
-        Publish member verification request.  QoS 2 + local store.
+        Mempublikasikan request verifikasi member. Menggunakan QoS 2 + penyimpanan lokal.
 
-        There is NO separately generated requestId.
-        sessionNumber itself is the unique request/transaction identifier.
-
-        The request is always stored locally.  However, the *response*
-        must arrive in real-time for the gate to open; if the broker is
-        unreachable the verification will time out regardless.
+        Request selalu disimpan di lokal terlebih dahulu. Namun, *respons* 
+        harus diterima secara real-time agar palang terbuka. Jika broker 
+        tidak dapat dijangkau, verifikasi akan tetap dianggap timeout.
         """
         payload = {
             "sessionNumber": session_number,
@@ -510,9 +488,9 @@ class MQTTService:
 
     def publish_help(self, timestamp, reason):
         """
-        Publish a help request.  QoS 1, realtime, NO local store.
+        Mempublikasikan permintaan bantuan (help). Menggunakan QoS 1, real-time.
 
-        If MQTT is offline, the message is dropped with a warning.
+        Jika MQTT offline, pesan langsung diabaikan dan peringatan akan dicatat di log.
         """
         payload = {
             "time": timestamp,

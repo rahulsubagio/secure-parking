@@ -10,11 +10,6 @@ PLC_SLAVE_ID = int(os.getenv("PLC_SLAVE_ID", "1"))
 PLC_TIMEOUT = float(os.getenv("PLC_TIMEOUT", "0.5"))
 PLC_POLL_INTERVAL = float(os.getenv("PLC_POLL_INTERVAL", "0.10"))
 
-# pymodbus uses ZERO-BASED addresses.
-# Outseal slave map:
-# R.1 = coil 0, R.2 = coil 1
-# B.1 = coil 128, therefore B.21 = 148, B.37 = 164
-# S.1 = discrete input 0 ... S.6 = discrete input 5
 PLC = {
     "R1": 0,
     "R2": 1,
@@ -79,7 +74,7 @@ SESSION_SEQUENCE_FILE = os.getenv(
 )
 SESSION_SEQUENCE_DIGITS = 4
 
-# How long a vehicle can remain in the "waiting for choice/scan" state.
+# Batas waktu tunggu maksimal.
 USER_ACTION_TIMEOUT = float(os.getenv("USER_ACTION_TIMEOUT", "30"))
 
 # ---------------- HELP ----------------

@@ -25,12 +25,7 @@ class TicketPrinter:
         return True
 
     def _check_paper_status(self):
-        """Best-effort ESC/POS paper/status check.
-
-        Not every XP-Q200H firmware/USB interface exposes real-time status.
-        If the status command is unsupported, printing is allowed to proceed
-        and any actual print exception is handled by main.py as a help event.
-        """
+        """Pengecekan status kertas printer ESC/POS."""
         if self.printer is None:
             return True
 
@@ -40,23 +35,19 @@ class TicketPrinter:
             if device is None or not hasattr(device, "read"):
                 return True
 
-            # DLE EOT 4 = paper sensor/status in common ESC/POS implementations.
             self.printer._raw(b"\x10\x04\x04")
             data = device.read(in_ep, 1, timeout=300)
             if not data:
                 return True
 
             status = int(data[0])
-            # For paper sensor status, bit 2 is commonly the paper-end flag.
-            # Firmware varies, so only treat the documented paper-end bit as fault.
             paper_end = bool(status & 0x04)
             if paper_end:
-                raise RuntimeError("Printer reports paper end")
+                raise RuntimeError("Kertas printer habis")
         except RuntimeError:
             raise
         except Exception as exc:
-            # Unsupported status read must not block a healthy printer.
-            log.debug("Printer status query unavailable: %s", exc)
+            log.debug("Gagal membaca status printer: %s", exc)
 
         return True
 
@@ -70,7 +61,6 @@ class TicketPrinter:
 
         p = self.printer
 
-
         p.set(align="center", bold=True, width=2, height=2)
         p.text(config.HOSPITAL_NAME + "\n")
 
@@ -78,7 +68,6 @@ class TicketPrinter:
         p.text(config.HOSPITAL_ADDRESS + "\n")
         p.text("--------------------------------\n")
 
-        # Format waktu untuk tiket (hilangkan huruf 'T' dan milidetik)
         display_time = entry_time.replace("T", " ").split(".")[0]
         
         p.text(f"Waktu Masuk: {display_time}\n")
@@ -88,12 +77,11 @@ class TicketPrinter:
         p.text(f"ID: {session_number}\n")
         p.set(bold=False)
 
-        # QR content = session number, per project requirement.
         p.set(align="center")
         p.qr(session_number, size=8)
 
-        p.text("\nHARAP TIDAK MENINGGALKAN TIKET DI\n")
-        p.text("KENDARAAN. JIKA TIKET HILANG,\n")
+        p.text("HARAP TIDAK MENINGGALKAN KARCIS DI\n")
+        p.text("KENDARAAN. JIKA KARCIS HILANG,\n")
         p.text(
             f"{vehicle_label.upper()} DENDA "
             f"{config.TICKET_FINE_CAR if vehicle_type == 'car' else config.TICKET_FINE_MOTOR}\n"

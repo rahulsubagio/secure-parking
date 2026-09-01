@@ -17,6 +17,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("gate-in")
 
+#sembunyikan error printer
+logging.getLogger("escpos").setLevel(logging.ERROR)
+logging.getLogger("escpos.printer").setLevel(logging.ERROR)
+logging.getLogger("escpos.profile").setLevel(logging.ERROR)
 
 def iso_now():
     # Format waktu: yyyy-MM-dd'T'HH:mm:ss.SSS

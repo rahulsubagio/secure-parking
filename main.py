@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import logging
 import signal
 import threading
@@ -296,7 +295,21 @@ class GateInApp:
         ).start()
 
     def on_qr(self, member_code):
+        member_code = member_code.strip()
         with self.state_lock:
+            # 1. Cegah eksekusi paralel jika sedang memproses QR lain
+            if getattr(self, 'qr_processing', False):
+                log.warning("[QR] Scan %s DIABAIKAN — sistem sedang memproses QR sebelumnya", member_code)
+                return
+                
+            # 2. Debounce khusus untuk member_code yang sama (5 detik)
+            # Mencegah pemindaian ganda dari alat barcode scanner
+            now = time.monotonic()
+            debounce_key = f"QR_{member_code}"
+            if now - self.last_event_time.get(debounce_key, 0.0) < 5.0:
+                log.warning("[QR] Scan %s DIABAIKAN — terlalu cepat (debounce)", member_code)
+                return
+                
             if not self.session_active:
                 if self.last_b31:
                     log.info(
@@ -310,11 +323,15 @@ class GateInApp:
                         "[QR] Scan QR DIABAIKAN — tidak ada sesi aktif"
                     )
                     return
+                    
+            # Set flag dan update timer
+            self.qr_processing = True
+            self.last_event_time[debounce_key] = now
 
-        log.info("[QR] QR code diterima: %s", member_code.strip())
+        log.info("[QR] QR code diterima: %s", member_code)
         threading.Thread(
             target=self.handle_member,
-            args=(member_code.strip(),),
+            args=(member_code,),
             name="member-handler",
             daemon=True,
         ).start()
@@ -404,6 +421,8 @@ class GateInApp:
     def handle_member(self, member_code):
         if not member_code:
             log.warning("[MEMBER] Kode member kosong — diabaikan")
+            with self.state_lock:
+                self.qr_processing = False
             return
 
         session_number = self.sessions.next_session()
@@ -474,6 +493,8 @@ class GateInApp:
             )
         finally:
             self.finish_transaction_state()
+            with self.state_lock:
+                self.qr_processing = False
 
     def on_help_request(self):
         if not self.debounced("B13"):

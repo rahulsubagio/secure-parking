@@ -106,9 +106,9 @@ class TicketPrinter:
                         bg.paste(img, (x_offset, 0))
                     img = bg
                 
-                # Set center=False to suppress profile warning, and use bitImageColumn
-                # which has better compatibility on some Xprinter firmware.
-                p.image(img, impl="bitImageColumn", center=False)
+                # Set center=False to suppress profile warning, and use bitImageRaster
+                # which is the most compatible implementation for Xprinter XP-Q200H.
+                p.image(img, impl="bitImageRaster", center=False)
             except Exception:
                 log.exception("Failed printing logo; continuing without logo.")
 

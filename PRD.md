@@ -1,4 +1,0 @@
-
-
-## tambah fitur stop
-aku mau ketika memerintahkan palang naik (R.1) dan turun (R.2) hanya nyala selama 1 detik saja (karena hanya berupa trigger gnd di kontroller barrier gate, ketika relay R.1 dan R.2 PLC aktif/nyala terus maka buzzer kontroller barrier gate bunyi terus selama relay R.1 dan R.2 PLC aktif/nyala). aku juga mau menambahkan fitur stop pergerakan palang (R.3) ketika selama proses palang turun (R.2) tiba-tiba ada orang lewat (sensor photocell aktif (S.6)) maka perintah stop akan aktif (R.3) sebagai fitur keamanan ketika ada orang atau benda yang lewat selama proses penutupan palang setelah kendaraan berhasil masuk dan memulai proses penutupan palang.

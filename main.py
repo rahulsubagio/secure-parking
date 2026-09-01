@@ -382,7 +382,7 @@ class GateInApp:
 
             # Step 4: Tunggu R1 dari PLC
             self._log_step(4, 4, "Menunggu barrier terbuka (R1)...")
-            if self.plc.wait_gate_open(timeout=5):
+            if self.plc.wait_gate_open(timeout=5, retry_request=True):
                 log.info(">>> STEP [4/4] BERHASIL — R1 ON, barrier TERBUKA")
                 log.info("============================================")
                 log.info("  TRANSAKSI SELESAI — SUKSES")
@@ -451,7 +451,7 @@ class GateInApp:
 
             # Step 3: Tunggu R1 dari PLC
             self._log_step(3, 3, "Menunggu barrier terbuka (R1)...")
-            if self.plc.wait_gate_open(timeout=5):
+            if self.plc.wait_gate_open(timeout=5, retry_request=True):
                 log.info(">>> STEP [3/3] BERHASIL — R1 ON, barrier TERBUKA")
                 log.info("============================================")
                 log.info("  TRANSAKSI MEMBER SELESAI — SUKSES")

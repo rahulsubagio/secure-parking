@@ -173,13 +173,14 @@ class PLCModbus:
                 log.exception("Failed to reset session latches")
                 return False
 
-    def wait_gate_open(self, timeout=5.0):
+    def wait_gate_open(self, timeout=5.0, retry_request=False):
         """Wait until R.1 is observed ON."""
         log.debug(
             "Waiting for R1 (barrier open), timeout=%.1fs", timeout
         )
         deadline = time.monotonic() + timeout
         poll_count = 0
+        last_retry_time = time.monotonic()
         while time.monotonic() < deadline:
             state = self.read_outputs_and_bits()
             poll_count += 1
@@ -190,6 +191,12 @@ class PLCModbus:
                     timeout - (deadline - time.monotonic()),
                 )
                 return True
+            
+            if retry_request and (time.monotonic() - last_retry_time > 1.0):
+                log.warning("R1 not detected yet, resending OPEN_REQUEST...")
+                self.open_request()
+                last_retry_time = time.monotonic()
+
             time.sleep(0.05)
         log.warning(
             "R1 not detected after %d poll(s) (%.1fs timeout)",

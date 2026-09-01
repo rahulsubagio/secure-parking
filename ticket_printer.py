@@ -76,19 +76,39 @@ class TicketPrinter:
                 p.set(align="center")
                 img = Image.open(config.PRINTER_LOGO)
                 
+                # Convert image to RGB to handle alpha channels properly when pasting
+                if img.mode != "RGB" and img.mode != "RGBA":
+                    img = img.convert("RGBA")
+                
                 # Resize gambar secara proporsional agar tidak kebesaran di kertas thermal
-                max_width = getattr(config, "PRINTER_LOGO_WIDTH", 250)
+                max_width = getattr(config, "PRINTER_LOGO_WIDTH", 380)
                 if img.width > max_width:
                     ratio = max_width / float(img.width)
                     new_height = int(float(img.height) * float(ratio))
                     
-                    # Pillow compatibility fallback (mengakomodasi versi lama/baru Pillow)
+                    # Pillow compatibility fallback
                     resample_filter = getattr(Image, "Resampling", Image)
                     filter_mode = getattr(resample_filter, "LANCZOS", getattr(Image, "ANTIALIAS", 1))
                     
                     img = img.resize((max_width, new_height), filter_mode)
+                elif max_width < img.width:
+                    pass # Only resize down, or we could scale up, but let's keep it safe
                 
-                p.image(img, impl="bitImageRaster")
+                # Manual centering for 80mm thermal printers (usually 512 pixels wide)
+                # This avoids the "media.width.pixel not set" warning in python-escpos
+                PRINTER_WIDTH = 512
+                if img.width < PRINTER_WIDTH:
+                    bg = Image.new("RGB", (PRINTER_WIDTH, img.height), "white")
+                    x_offset = (PRINTER_WIDTH - img.width) // 2
+                    if img.mode == "RGBA":
+                        bg.paste(img, (x_offset, 0), img)
+                    else:
+                        bg.paste(img, (x_offset, 0))
+                    img = bg
+                
+                # Set center=False to suppress profile warning, and use bitImageColumn
+                # which has better compatibility on some Xprinter firmware.
+                p.image(img, impl="bitImageColumn", center=False)
             except Exception:
                 log.exception("Failed printing logo; continuing without logo.")
 

@@ -21,6 +21,7 @@ class TicketPrinter:
             config.PRINTER_INTERFACE,
             config.PRINTER_IN_EP,
             config.PRINTER_OUT_EP,
+            profile=getattr(config, "PRINTER_PROFILE", "POS-58"),
         )
         return True
 

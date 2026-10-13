@@ -36,6 +36,7 @@ PRINTER_PID = int(os.getenv("PRINTER_PID", "0x2016"), 16)
 PRINTER_IN_EP = int(os.getenv("PRINTER_IN_EP", "0x81"), 16)
 PRINTER_OUT_EP = int(os.getenv("PRINTER_OUT_EP", "0x03"), 16)
 PRINTER_INTERFACE = int(os.getenv("PRINTER_INTERFACE", "0"))
+PRINTER_PROFILE = os.getenv("PRINTER_PROFILE", "POS-80")
 PRINTER_LOGO = os.getenv("PRINTER_LOGO", "./logo.png")
 PRINTER_LOGO_WIDTH = int(os.getenv("PRINTER_LOGO_WIDTH", "380"))
 
